@@ -1,0 +1,96 @@
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:util="http://www.springframework.org/schema/util"
+	xmlns:batch="http://www.springframework.org/schema/batch" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/batch	http://www.springframework.org/schema/batch/spring-batch-3.0.xsd
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
+		http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util-4.0.xsd"
+	default-autowire="byName" default-init-method="init">
+
+	<import resource="classpath:com/employee/utility/batch/resources/batch-context-model.xml" />
+
+	<!-- JobRepository and JobLauncher are configuration/setup classes -->
+	<bean id="jobRepository"
+		class="org.springframework.batch.core.repository.support.MapJobRepositoryFactoryBean">
+		<property name="transactionManager" ref="transactionManager" />
+	</bean>
+
+	<bean id="jobLauncher"
+		class="org.springframework.batch.core.launch.support.SimpleJobLauncher">
+		<property name="jobRepository" ref="jobRepository" />
+	</bean>
+
+	<bean id="jobRegistry"
+		class="org.springframework.batch.core.configuration.support.MapJobRegistry" />
+
+	<!-- A BeanPostProcessor that registers Job beans with a JobRegistry. -->
+	<bean
+		class="org.springframework.batch.core.configuration.support.JobRegistryBeanPostProcessor">
+		<property name="jobRegistry" ref="jobRegistry" />
+	</bean>
+
+	<!-- Optional ItemProcessor to perform business logic/filtering on the input 
+		records -->
+	<bean id="itemProcessor" class="com.employee.utility.batch.BatchUtilityItemProcessor" />
+
+	<!-- Step will need a transaction manager -->
+	<bean id="transactionManager"
+		class="org.springframework.batch.support.transaction.ResourcelessTransactionManager" />
+
+	<!-- Optional JobExecutionListener to perform business logic before and 
+		after the job -->
+	<bean id="jobListener" class="com.employee.utility.batch.job.BatchUtilityJobListener" />
+
+	<bean class="org.springframework.jdbc.core.JdbcTemplate">
+		<constructor-arg ref="dataSource" />
+	</bean>
+	
+	<bean id="batchPreparedSetter" class="com.employee.utility.batch.BatchPreparedStatementSetter">
+		<property name="dayLimit" value="${ARCHIVE_DAYS_LIMIT}"></property>
+		<property name="fetchLimit" value="${BATCH_FETCH_SIZE}"></property>
+	</bean>
+	
+	<bean id="employeeArchiveWriter" class="com.employee.utility.batch.BatchUtilityWriter">
+		<constructor-arg ref="dataSource" />
+	</bean>
+
+	<bean id="employeeBatchReader" class="org.springframework.batch.item.database.StoredProcedureItemReader">
+		<property name="dataSource" ref="dataSource" />
+		<property name="procedureName" value="${EMPLOYEE_SP_NAME}" />
+		<property name="fetchSize" value="${BATCH_FETCH_SIZE}"/>
+		<property name="parameters">
+			<list>
+				<bean class="org.springframework.jdbc.core.SqlParameter">
+					<constructor-arg index="0" value="day_limit" />
+					<constructor-arg index="1">
+						<util:constant static-field="java.sql.Types.INTEGER" />
+					</constructor-arg>
+				</bean>
+				<bean class="org.springframework.jdbc.core.SqlParameter">
+					<constructor-arg index="0" value="fetch_limit" />
+					<constructor-arg index="1">
+						<util:constant static-field="java.sql.Types.INTEGER" />
+					</constructor-arg>
+				</bean>
+			</list>
+		</property>
+		<property name="rowMapper">
+			<bean class="com.employee.utility.batch.EmployeeRowMapper" />
+		</property>
+		<property name="preparedStatementSetter" ref="batchPreparedSetter" />
+	</bean>
+
+
+	<!-- Actual Job -->
+	<batch:job id="employeeBatchJob" restartable="true">
+		<batch:step id="step1">
+			<batch:tasklet transaction-manager="transactionManager">
+				<batch:chunk reader="employeeBatchReader" writer="employeeArchiveWriter"
+					processor="itemProcessor" commit-interval="10" />
+			</batch:tasklet>
+		</batch:step>
+		<batch:listeners>
+			<batch:listener ref="jobListener" />
+		</batch:listeners>
+	</batch:job>
+
+</beans>			
